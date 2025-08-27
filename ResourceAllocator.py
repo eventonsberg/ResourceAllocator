@@ -638,7 +638,7 @@ if not stocks_df.empty:
             "**Solver time limit (seconds)**",
             min_value=10,
             step=10,
-            value=60
+            value=30
         )
         st.caption("Maximum time the solver will run before stopping. The best solution found within this limit will be returned.")
 
@@ -713,4 +713,5 @@ if not df.empty:
     with st.expander("View surplus equipment", expanded=keep_open_surplus):
         add_checkbox(keep_open_surplus, "surplus")
         st.dataframe(surplus_df, hide_index=True, width=500)
+
         st.caption("Surplus equipment refers to the amount of arriving equipment that remains after allocation.")
