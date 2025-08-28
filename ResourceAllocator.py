@@ -201,25 +201,23 @@ def create_classification_bar_chart(df, y_value, x_label, y_label, title, for_br
     return chart
 
 # Optimization parameters
-def optimization_params_input(params_dict, param_fields, param_name, description, param_subscripts=None, min_value=0):
+def optimization_params_input(params_dict, param_fields, param_name, info, param_subscripts=None, min_value=0):
     # Create input fields for optimization parameters
-    col1, col2, col3 = st.columns(3)
     if param_subscripts is None:
         param_subscripts = [""]
     for index, s in enumerate(param_subscripts):
-        col = [col1, col2, col3][index % 3]
         key = f"{param_name}_{s}" if s else param_name
         value = params_dict.get(key, min_value)
         if value < min_value:
             st.warning(f"Invalid Excel input: Value for *{key}* cannot be less than {min_value}.")
             value = min_value
-        param_fields[key] = col.number_input(
+        param_fields[key] = st.number_input(
             f"**{key}**",
             min_value=min_value,
             step=1,
-            value=value
+            value=value,
+            help=info if index == 0 else None,
         )
-    st.caption(description)
 
 # Optimization algorithm
 @st.cache_data(show_spinner=False)
@@ -533,8 +531,12 @@ unit_metrics, brigade_metrics  = create_unit_and_brigade_metrics(stocks_df)
 
 # Display input data
 if not stocks_df.empty:
-    # Sidebar for selection of brigade, unit, and equipment category
+    # Sidebar with tabs for visualization and optimization
     with st.sidebar:
+        tabVis, tabOpt = st.tabs(["Visualization", "Optimization"])
+    
+    # Visualization options
+    with tabVis:
         st.header("Visualization options")
         selected_brigade = st.selectbox(':blue-badge[Selected brigade]', options=brigades)
         unit_options = stocks_df[stocks_df['Brigade'] == selected_brigade][['unit_id', 'Unit', 'unique_unit_name']].drop_duplicates().set_index('unit_id')
@@ -577,43 +579,60 @@ if not stocks_df.empty:
     }
 
     # Set optimization parameters
-    st.header("Optimization Parameters")
-    params_dict = dict(zip(params_df["Parameter"], params_df["Value"]))
-    optimization_params = {}
-    keep_open_params = st.session_state.get("params", False)
-    with st.expander("Set optimization parameters", expanded=keep_open_params):
-        add_checkbox(keep_open_params, "params")
+    with tabOpt:
+        st.header("Optimization parameters")
+        params_dict = dict(zip(params_df["Parameter"], params_df["Value"]))
+        optimization_params = {}
         optimization_params_input(
             params_dict=params_dict,
             param_fields=optimization_params,
             param_name="c",
             param_subscripts=brigades,
             min_value=1,
-            description="""
-                Brigade weights.
+            info="""
+                Brigade weight.
                 *c_i* can be used to adjust the priority of brigade *i*.
             """
         )
+        st.divider()
         optimization_params_input(
             params_dict=params_dict,
             param_fields=optimization_params,
             param_name="d",
-            description="""
+            info="""
                 Difference equalizer.
                 *d* can be used to reduce differences between brigades and give priority to brigades with lower fulfilment.
             """
         )
+        st.divider()
         optimization_params_input(
             params_dict=params_dict,
             param_fields=optimization_params,
             param_name="P",
             param_subscripts=["20", "40"],
-            description="""
+            info="""
                 Punishment for brigades with more than 20% shortfall or 40% shortfall.
                 *P_20* can be used to maximize the number of fully capable brigades.
                 *P_40* can be used to minimize the number of non-capable brigades.
             """
         )
+        st.divider()
+        optimization_params["timeLimit"] = st.number_input(
+            "**Solver time limit (seconds)**",
+            min_value=10,
+            step=10,
+            value=30,
+            help="""
+                Maximum time the solver will run before stopping.
+                The best solution found within this limit will be returned.
+            """
+        )
+
+    # Run optimization
+    st.header("Optimization")
+    keep_open_optimization = st.session_state.get("optimization", False)
+    with st.status("Running optimization...", expanded=keep_open_optimization) as status:
+        add_checkbox(keep_open_optimization, "optimization")
         st.markdown("**Objective function to be minimized**")
         st.latex(r"""
             f(x) = \sum_{i \in \mathcal{B}} c_i \cdot b_i(x) +
@@ -626,28 +645,16 @@ if not stocks_df.empty:
             - $x$ represent the quantity of equipment allocated to each unit,
             - $\mathcal{B}$ is the set of brigades,
             - $c_i$ is the weight for brigade $i$,
-            - $b_i(x)$ is the sum of shortfalls for brigade $i$ given allocation $x$,
+            - $b_i(x)$ is the weighted sum of shortfalls for brigade $i$ given allocation $x$,
             - $d$ is the difference equalizer weight,
             - $P_{20}$ is the punishment weight for brigades with more than 20% shortfall,
             - $P_{40}$ is the punishment weight for brigades with more than 40% shortfall,
             - $z_{20,i}$ is a binary variable indicating if brigade $i$ has any unit with more than 20% shortfall,
             - $z_{40,i}$ is a binary variable indicating if brigade $i$ has any unit with more than 40% shortfall.
             """)
-        colTimeLimit, _, _ = st.columns(3)
-        optimization_params["timeLimit"] = colTimeLimit.number_input(
-            "**Solver time limit (seconds)**",
-            min_value=10,
-            step=10,
-            value=30
-        )
-        st.caption("Maximum time the solver will run before stopping. The best solution found within this limit will be returned.")
-
-    # Run optimization
-    keep_open_optimization = st.session_state.get("optimization", False)
-    with st.status("Running optimization...", expanded=keep_open_optimization) as status:
-        add_checkbox(keep_open_optimization, "optimization")
         with st.spinner(show_time=True):
             df, unit_metrics, brigade_metrics, optimization_values = run_optimization(stocks_df, arrivals, optimization_params)
+        st.markdown("**Optimization results**")
         st.markdown(f"Objective value: $f(x) = {optimization_values['Objective value']}$")
         col1_header, col2_header, col3_header, col4_header = st.columns([4, 2, 1, 1])
         col1_header.caption("$i$")
@@ -713,5 +720,4 @@ if not df.empty:
     with st.expander("View surplus equipment", expanded=keep_open_surplus):
         add_checkbox(keep_open_surplus, "surplus")
         st.dataframe(surplus_df, hide_index=True, width=500)
-
         st.caption("Surplus equipment refers to the amount of arriving equipment that remains after allocation.")
